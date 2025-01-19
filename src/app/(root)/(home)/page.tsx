@@ -90,7 +90,7 @@ export default function Home() {
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                You have no scheduled interviews
+                You have no scheduled interviews at the moment
               </div>
             )}
           </div>
