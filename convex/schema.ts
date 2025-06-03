@@ -15,6 +15,7 @@ export default defineSchema({
     description: v.optional(v.string()),
     startTime: v.number(),
     endTime: v.optional(v.number()),
+    code: v.optional(v.string()),
     status: v.string(),
     streamCallId: v.string(),
     candidateId: v.string(),
@@ -29,4 +30,12 @@ export default defineSchema({
     interviewerId: v.string(),
     interviewId: v.id("interviews"),
   }).index("by_interview_id", ["interviewId"]),
+
+  editor_state: defineTable({
+    meeting_id: v.id("interviews"),
+    seq: v.number(),
+    content: v.string(),
+    userId: v.string(),
+    createdAt: v.number(),
+  }).index("by_meeting_id", ["meeting_id"]),
 });

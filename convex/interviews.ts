@@ -68,3 +68,35 @@ export const updateInterviewStatus = mutation({
     });
   },
 });
+
+export const updateInterviewCode = mutation({
+  args: {
+    id: v.id("interviews"),
+    code: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.patch(args.id, {
+      code: args.code,
+    });
+  },
+});
+
+export const createInstantInterview = mutation({
+  args: {
+    candidateId: v.string(),
+    interviewerIds: v.array(v.string()),
+    streamCallId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+
+    return await ctx.db.insert("interviews", {
+      title: "Instant Interview",
+      description: "Instant coding interview session",
+      startTime: Date.now(),
+      status: "in_progress",
+      ...args,
+    });
+  },
+});

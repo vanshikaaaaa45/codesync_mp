@@ -1,5 +1,5 @@
 import { CODING_QUESTIONS, LANGUAGES } from "@/constants";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { ScrollArea, ScrollBar } from "./ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -7,10 +7,85 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { AlertCircleIcon, BookIcon, LightbulbIcon } from "lucide-react";
 import Editor from "@monaco-editor/react";
 
+// 🟢 Convex + Stream
+import { useCall } from "@stream-io/video-react-sdk";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { useUser } from "@clerk/nextjs";
+import { useUserRole } from "@/hooks/useUserRole";
+
 function CodeEditor() {
   const [selectedQuestion, setSelectedQuestion] = useState(CODING_QUESTIONS[0]);
   const [language, setLanguage] = useState<"javascript" | "python" | "java">(LANGUAGES[0].id);
   const [code, setCode] = useState(selectedQuestion.starterCode[language]);
+
+  /* --------------------------------------------------------------------- */
+  /* 1. Identify the interview document that matches the current call      */
+  /* --------------------------------------------------------------------- */
+  const call = useCall();
+
+  // live subscription to the interview (includes code field we added)
+  const interview = useQuery(api.interviews.getInterviewByStreamCallId, {
+    streamCallId: call?.id || "",
+  });
+
+  useEffect(() => {
+    console.log("[CodeEditor] interview subscription value:", interview);
+  }, [interview]);
+
+  /* --------------------------------------------------------------------- */
+  /* Editor state synchronisation (optimistic concurrency)                */
+  /* --------------------------------------------------------------------- */
+  const saveEditorState = useMutation(api.editorState.saveState);
+  const lastSyncedCode = useRef<string>("");
+  const lastSeq      = useRef<number | undefined>(undefined);
+
+  // live subscription to latest snapshot
+  const latestState = useQuery(
+    api.editorState.getLatestState,
+    interview?._id ? { meeting_id: interview._id } : "skip"
+  );
+
+  useEffect(() => {
+    console.log("[CodeEditor] latestState subscription value:", latestState);
+  }, [latestState]);
+
+  useEffect(() => {
+    if (!interview) return;
+
+    const interval = setInterval(() => {
+      if (lastSyncedCode.current !== code) {
+        console.log("[CodeEditor] ▲ local code changed, pushing snapshot");
+        lastSyncedCode.current = code;
+        saveEditorState({
+          meeting_id: interview._id,
+          content: code,
+          lastSeq: lastSeq.current,
+        })
+          .then((doc) => {
+            console.log("[CodeEditor] ✅ snapshot saved:", doc);
+            if (doc) lastSeq.current = doc.seq;
+          })
+          .catch((err) =>
+            console.warn("[CodeEditor] ❌ save rejected:", err.message)
+          );
+      }
+    }, 500); // ⏱ send a snapshot every 5 s
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interview?._id, code]);
+
+  /* --------------------------------------------------------------------- */
+  /* 3. Server → local: update when a peer saves                           */
+  /* --------------------------------------------------------------------- */
+  useEffect(() => {
+    if (latestState && latestState.content !== code) {
+      setCode(latestState.content);
+      lastSeq.current = latestState.seq;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestState?.seq]);
 
   const handleQuestionChange = (questionId: string) => {
     const question = CODING_QUESTIONS.find((q) => q.id === questionId)!;
@@ -22,6 +97,33 @@ function CodeEditor() {
     setLanguage(newLanguage);
     setCode(selectedQuestion.starterCode[newLanguage]);
   };
+
+  /* Clerk identity */
+  const { user } = useUser();
+  const { isInterviewer } = useUserRole();
+
+  const createInstantInterview = useMutation(
+    api.interviews.createInstantInterview
+  );
+
+  /* ------------------------------------------------------------------ */
+  /*  Create interview on-the-fly for instant meetings                  */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!call?.id || interview === undefined) return; // still loading
+    if (interview) return;                            // already exists
+
+    const subject = user?.id;
+    if (!subject) return;                            // not signed in yet
+
+    createInstantInterview({
+      candidateId: isInterviewer ? "" : subject,
+      interviewerIds: isInterviewer ? [subject] : [],
+      streamCallId: call.id,
+    }).then((doc) =>
+      console.log("[CodeEditor] Created instant interview:", doc)
+    );
+  }, [call?.id, interview, user?.id, isInterviewer]);
 
   return (
     <ResizablePanelGroup direction="vertical" className="min-h-[calc-100vh-4rem-1px]">
@@ -62,10 +164,10 @@ function CodeEditor() {
                       <SelectValue>
                         <div className="flex items-center gap-2">
                           <img
-                            src={`/${language}.png`}
-                            alt={language}
+                           src={`/${language}.png`}
+                           alt={language}
                             className="w-5 h-5 object-contain"
-                          />
+                            />
                           {LANGUAGES.find((l) => l.id === language)?.name}
                         </div>
                       </SelectValue>
@@ -76,10 +178,10 @@ function CodeEditor() {
                         <SelectItem key={lang.id} value={lang.id}>
                           <div className="flex items-center gap-2">
                             <img
-                              src={`/${lang.id}.png`}
-                              alt={lang.name}
-                              className="w-5 h-5 object-contain"
-                            />
+                             src={`/${lang.id}.png`}
+                             alt={lang.name}
+                             className="w-5 h-5 object-contain"
+                             />
                             {lang.name}
                           </div>
                         </SelectItem>
@@ -169,7 +271,10 @@ function CodeEditor() {
             language={language}
             theme="vs-dark"
             value={code}
-            onChange={(value) => setCode(value || "")}
+            onChange={(value) => {
+              console.log("[CodeEditor] current value:", value);
+              setCode(value ?? "");
+            }}
             options={{
               minimap: { enabled: false },
               fontSize: 18,
@@ -186,4 +291,4 @@ function CodeEditor() {
     </ResizablePanelGroup>
   );
 }
-export default CodeEditor;
+export default CodeEditor;
